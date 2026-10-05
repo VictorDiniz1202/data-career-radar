@@ -1,0 +1,59 @@
+# Private governance and career records
+/contexto/
+/prompts/
+/CLAUDE.md
+/AGENTS.md
+/.agents/
+/.codex/
+/.claude/
+/private/
+/applications/
+/resumes/
+/skill-observations/
+/work/
+/outputs/
+
+# Secrets: only sanitized example files are publishable
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+credentials*.json
+service-account*.json
+
+# Runtime data and generated files
+/data/
+/logs/
+/backups/
+/dbt/target/
+/dbt/logs/
+/dbt/dbt_packages/
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+*.parquet
+*.log
+*.pbix
+**/.pbi/
+
+# Python and tooling
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+.DS_Store
+Thumbs.db
+
+# Keep dependency lockfiles, SQL migrations and model schema files tracked.

@@ -1,0 +1,4 @@
+companies:
+  - name: example_company
+    board: greenhouse
+    slug: examplecompany
