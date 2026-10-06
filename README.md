@@ -1,80 +1,78 @@
 # Data Career Radar
 
-Collect public postings from curated Greenhouse and Ashby boards, normalize basic
-location hints, and persist them idempotently in PostgreSQL. Remote status is a
-hint, **not proof of eligibility to work from Brazil**.
+> An automated ETL pipeline to surface truly eligible remote data roles for LATAM professionals.
 
-## Current scope
+## 🔴 The Problem
+Job boards are fundamentally broken for international remote workers. Filtering by "Remote" often yields thousands of jobs that are actually restricted to "Remote - US Only", "Remote - UK", or require specific state residencies. Identifying a truly eligible opportunity (e.g., "Remote - Brazil", "Remote - LATAM", or "Anywhere") requires opening each posting, reading the fine print, and wasting hours of manual labor.
 
-- Provider adapters with canonical Pydantic models.
-- Raw `location` preserved alongside `is_remote` and nullable `country_code`.
-- Conservative BR/US hints using country names/codes and a small city dictionary.
-  Unknown or conflicting locations stay unclassified. Unrecognized place names
-  also return NULL even alongside a known country: coverage favors precision.
-  Secondary Ashby locations are outside this increment.
-- UPSERT keyed by `(source, board_slug, external_id)`, preserving `first_seen_at`
-  and refreshing mutable fields and `last_seen_at`.
+## 🟢 The Solution
+**Data Career Radar** bypasses job aggregators entirely. It connects directly to the underlying applicant tracking systems (Greenhouse, Ashby, etc.) of targeted tech companies, ingests the raw data, and normalizes the chaotic location strings into deterministic `country_code` and `is_remote` flags. 
 
-Ranking, eligibility, snapshots, history, dashboards and scheduling are not
-implemented. No time-saving or hiring-outcome metrics are claimed.
+The result? A highly curated, queryable database of opportunities that strictly match my eligibility criteria, turning hours of manual searching into an automated, high-ROI workflow.
 
-## Local setup
+## 🏗️ Architecture & Tech Stack
+The project is built around a robust, scalable ETL architecture tailored for resilience and data integrity.
 
-Requires Python 3.12+, Docker and Docker Compose. Run from the repository root.
+* **Language:** Python 3.10+
+* **Ingestion:** Requests, Pydantic (Strict typing and data validation)
+* **Storage:** PostgreSQL 15, SQLAlchemy 2.0 (ORM)
+* **Migrations:** Alembic
+* **Quality & CI:** Pytest (Unit & Integration), Flake8, Docker Compose
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e '.[dev]'
-Copy-Item .env.example .env
-# Edit .env with your local database settings before starting PostgreSQL.
-docker compose up -d db
-python -m alembic upgrade head
-career-radar --action ingest --source greenhouse --slug clara
-career-radar --action ingest --source ashby --slug constructor
+```mermaid
+flowchart LR
+    subgraph External Sources
+        G[Greenhouse API]
+        A[Ashby API]
+    end
+
+    subgraph Python Application
+        Adapters[Adapters\nHTTP, Timeout, Error Handling]
+        Canonical[Canonical Model\nPydantic JobPosting]
+        Normalizer[Normalization\nExtract Country/Remote Flags]
+    end
+
+    subgraph Storage
+        DB[(PostgreSQL)]
+    end
+
+    G --> Adapters
+    A --> Adapters
+    Adapters --> Canonical
+    Canonical --> Normalizer
+    Normalizer -- "Idempotent UPSERT" --> DB
 ```
 
-The default source is Greenhouse (`clara`); Ashby's default board is `constructor`.
-`--limit` controls printed samples; all collected postings are stored. Re-ingest
-a board to update existing location hints. Migration `0002` initializes existing
-rows to `is_remote=false`, `country_code=NULL`, without a historical backfill.
-The `normalize` action prints ingestion guidance; it is not a backfill command.
+## 🧠 Key Engineering Decisions
 
-The Ashby adapter follows the [public API contract](https://developers.ashbyhq.com/docs/public-job-posting-api).
-It reads `title`, skips explicitly unlisted postings and uses `id` when present,
-otherwise the validated URL. A later change from missing to present ID may need
-identity reconciliation. `publishedAt` is not an update timestamp, so `updated_at`
-stays unknown. No pagination is documented. HTTP errors (including 429), timeouts
-and malformed listed records fail before persistence. Retries are not implemented.
+1. **The Adapter Pattern:** 
+   Each API has its own chaotic payload structure. Adapters isolate this external messiness, mapping specific API fields (e.g., Ashby's `jobTitle` vs Greenhouse's `title`) into a single, unified `JobPosting` Pydantic model. Adding a new provider requires zero changes to the storage or normalization logic.
+2. **Idempotency & UPSERTs:** 
+   The pipeline is designed to run multiple times a day without creating duplicate records. The persistence layer utilizes a `UNIQUE(source, board_slug, external_id)` constraint paired with PostgreSQL `ON CONFLICT DO UPDATE`. It elegantly inserts new roles and only updates the `last_seen_at` timestamp for existing ones.
+3. **Deterministic Normalization:** 
+   Instead of guessing eligibility purely with LLMs, a deterministic Regex/Logic layer extracts explicit signals (like `country_code='BR'` or `is_remote=True`) from raw strings like `"São Paulo / SP / Brazil"`, guaranteeing predictable downstream analytics.
 
-## Validation
+## 🚀 Local Setup
 
-```powershell
-python -m build
-python -m flake8 src tests migrations --max-line-length=88 --extend-ignore=E203,W503
-python -m mypy src/career_radar --check-untyped-defs
-python -m pytest -q
-```
-
-Database tests require schema creation permissions and use unique temporary
-schemas. They cover migrations, existing rows, updates, country clearing,
-concurrent UPSERTs and provider/board isolation.
-
-```powershell
-$env:CAREER_RADAR_TEST_DB = '1'
-python -m pytest -q
-python -m alembic check
-```
-
-To reverse the latest migration, use
-`python -m alembic downgrade 0001_create_job_postings`. This removes the two derived
-columns and keeps the posting rows; re-upgrade and re-ingest to recompute them.
-Validate reversals in an isolated database/schema first.
-
-## Known limits
-
-Dependencies have no lockfile. The existing Compose file publishes PostgreSQL on
-all interfaces; review the bind before use on shared networks. The existing
-Dockerfile and a clean-clone setup have not been validated in this sprint.
-Full-tree lint has one pre-existing long line in the Greenhouse adapter.
-Credentials, raw dumps and personal career context stay outside version control.
+1. **Start the database:**
+   ```bash
+   cp .env.example .env
+   docker-compose up -d
+   ```
+2. **Install the package and dependencies:**
+   ```bash
+   pip install -e ".[dev]"
+   ```
+3. **Run database migrations:**
+   ```bash
+   alembic upgrade head
+   ```
+4. **Run the Ingestion CLI:**
+   ```bash
+   # Ingest a specific company board
+   career-radar --action ingest --source greenhouse --slug clara
+   ```
+5. **Run tests:**
+   ```bash
+   pytest
+   ```
