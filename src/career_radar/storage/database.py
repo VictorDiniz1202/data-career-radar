@@ -1,0 +1,66 @@
+"""SQLAlchemy declarative model and engine factory for the storage layer."""
+
+import os
+from datetime import datetime
+
+from dotenv import load_dotenv
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Identity,
+    Text,
+    UniqueConstraint,
+    create_engine,
+)
+from sqlalchemy.engine import URL, Engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+UNIQUE_CONSTRAINT_NAME = "uq_job_postings_source_board_external_id"
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class JobPostingRow(Base):
+    """One job ad, identified by (source, board_slug, external_id) at the provider."""
+
+    __tablename__ = "job_postings"
+    __table_args__ = (
+        UniqueConstraint(
+            "source", "board_slug", "external_id", name=UNIQUE_CONSTRAINT_NAME
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    external_id: Mapped[str] = mapped_column(Text, nullable=False)
+    board_slug: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    location: Mapped[str | None] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    content: Mapped[str | None] = mapped_column(Text)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+def get_database_url() -> URL:
+    """Build the connection URL from POSTGRES_* env vars (see .env.example).
+
+    Uses URL.create so special characters in the password are escaped safely.
+    """
+    load_dotenv()
+    return URL.create(
+        "postgresql+psycopg2",
+        username=os.environ.get("POSTGRES_USER", "radar_user"),
+        password=os.environ.get("POSTGRES_PASSWORD"),
+        host=os.environ.get("POSTGRES_HOST", "localhost"),
+        port=int(os.environ.get("POSTGRES_PORT", "5433")),
+        database=os.environ.get("POSTGRES_DB", "radar_db"),
+    )
+
+
+def get_engine() -> Engine:
+    return create_engine(get_database_url(), pool_pre_ping=True)
