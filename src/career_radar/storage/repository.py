@@ -1,15 +1,35 @@
 """Persist provider-independent Pydantic postings with an atomic UPSERT."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, case, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
 from career_radar.ingestion.models import JobPosting
 from career_radar.storage.database import UNIQUE_CONSTRAINT_NAME, JobPostingRow
 
 _CHUNK_SIZE = 500
+_EVALUATION_FIELDS = (
+    "match_score",
+    "salary_extracted",
+    "match_reason",
+    "match_model",
+    "evaluated_at",
+)
+
+
+@dataclass(frozen=True)
+class PendingPosting:
+    """A stored posting that still needs an LLM evaluation."""
+
+    id: int
+    title: str
+    location: str | None
+    country_code: str | None
+    url: str
+    content: str
 
 
 @dataclass(frozen=True)
@@ -62,6 +82,9 @@ class JobPostingRepository:
             for start in range(0, len(values), _CHUNK_SIZE):
                 stmt = insert(JobPostingRow).values(values[start : start + _CHUNK_SIZE])
                 excluded = stmt.excluded
+                content_changed = JobPostingRow.content.is_distinct_from(
+                    excluded.content
+                )
                 upsert = stmt.on_conflict_do_update(
                     constraint=UNIQUE_CONSTRAINT_NAME,
                     set_={
@@ -73,6 +96,15 @@ class JobPostingRepository:
                         "updated_at": excluded.updated_at,
                         "content": excluded.content,
                         "last_seen_at": excluded.last_seen_at,
+                        # An evaluation describes the text it read: drop it when
+                        # the posting content changes so it is re-evaluated.
+                        **{
+                            field: case(
+                                (content_changed, None),
+                                else_=getattr(JobPostingRow, field),
+                            )
+                            for field in _EVALUATION_FIELDS
+                        },
                     },
                 ).returning(text("(xmax = 0) AS inserted"))
                 for (was_inserted,) in conn.execute(upsert):
@@ -81,3 +113,58 @@ class JobPostingRepository:
                     else:
                         updated += 1
         return UpsertResult(inserted, updated)
+
+    def fetch_unevaluated(
+        self, limit: int, allowed_countries: Sequence[str]
+    ) -> list[PendingPosting]:
+        """Postings without a score whose country hint does not exclude us.
+
+        NULL country_code is kept: unknown location needs review, it is not
+        proof of eligibility. Postings without content have nothing to evaluate.
+        """
+        country = JobPostingRow.country_code
+        stmt = (
+            select(
+                JobPostingRow.id,
+                JobPostingRow.title,
+                JobPostingRow.location,
+                JobPostingRow.country_code,
+                JobPostingRow.url,
+                JobPostingRow.content,
+            )
+            .where(
+                JobPostingRow.match_score.is_(None),
+                JobPostingRow.content.is_not(None),
+                JobPostingRow.content != "",
+                or_(country.is_(None), country.in_(list(allowed_countries))),
+            )
+            .order_by(JobPostingRow.last_seen_at.desc(), JobPostingRow.id)
+            .limit(limit)
+        )
+        with self.engine.connect() as conn:
+            return [PendingPosting(**row) for row in conn.execute(stmt).mappings()]
+
+    def save_evaluation(
+        self,
+        posting_id: int,
+        *,
+        score: int,
+        salary: str | None,
+        reason: str,
+        model: str,
+        evaluated_at: datetime,
+    ) -> bool:
+        """Store one evaluation in its own transaction; False if the row is gone."""
+        stmt = (
+            update(JobPostingRow)
+            .where(JobPostingRow.id == posting_id)
+            .values(
+                match_score=score,
+                salary_extracted=salary,
+                match_reason=reason,
+                match_model=model,
+                evaluated_at=evaluated_at,
+            )
+        )
+        with self.engine.begin() as conn:
+            return conn.execute(stmt).rowcount == 1

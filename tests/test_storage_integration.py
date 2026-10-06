@@ -10,6 +10,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 
 from career_radar.ingestion.models import JobPosting
 from career_radar.storage.database import JobPostingRow, get_engine
@@ -119,3 +120,68 @@ def test_concurrent_upserts_and_provider_isolation(database):
     assert repository.upsert_postings([posting(board_slug="other")]).inserted == 1
     with engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM job_postings")).scalar_one() == 3
+
+
+def test_evaluation_selection_storage_and_reset(database):
+    engine, config = database
+    command.upgrade(config, "head")
+    command.check(config)
+    repository = JobPostingRepository(engine)
+    repository.upsert_postings(
+        [
+            posting("São Paulo / SP / Brazil", external_id="br", content="Body BR"),
+            posting("Unknown", external_id="unknown", content="Body ?"),
+            posting("Remote U.S.", external_id="us", content="Body US"),
+            posting("Unknown", external_id="empty", content=None),
+        ]
+    )
+    pending = repository.fetch_unevaluated(10, ["BR"])
+    assert {p.country_code for p in pending} == {"BR", None}
+    assert len(pending) == 2
+    assert len(repository.fetch_unevaluated(1, ["BR"])) == 1
+
+    evaluated = datetime(2026, 10, 6, tzinfo=timezone.utc)
+    br = next(p for p in pending if p.country_code == "BR")
+    assert repository.save_evaluation(
+        br.id, score=8, salary=None, reason="Fit", model="m", evaluated_at=evaluated
+    )
+    assert not repository.save_evaluation(
+        -1, score=8, salary=None, reason="Fit", model="m", evaluated_at=evaluated
+    )
+    remaining = repository.fetch_unevaluated(10, ["BR"])
+    assert [p.country_code for p in remaining] == [None]
+    with pytest.raises(IntegrityError, match="match_score_range"):
+        repository.save_evaluation(
+            br.id, score=11, salary=None, reason="x", model="m", evaluated_at=evaluated
+        )
+
+    def stored_br():
+        with engine.connect() as conn:
+            return (
+                conn.execute(
+                    select(JobPostingRow.__table__).where(
+                        JobPostingRow.external_id == "br"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+
+    # Same content on re-ingestion keeps the evaluation...
+    repository.upsert_postings(
+        [posting("São Paulo / SP / Brazil", external_id="br", content="Body BR")]
+    )
+    row = stored_br()
+    assert (row["match_score"], row["match_model"]) == (8, "m")
+    assert row["evaluated_at"] == evaluated
+    # ...changed content clears it so the posting is evaluated again.
+    repository.upsert_postings(
+        [posting("São Paulo / SP / Brazil", external_id="br", content="New body")]
+    )
+    row = stored_br()
+    assert row["match_score"] is None
+    assert row["match_reason"] is None
+    assert row["evaluated_at"] is None
+    command.downgrade(config, "0002_add_normalization_fields")
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM job_postings")).scalar_one() == 4

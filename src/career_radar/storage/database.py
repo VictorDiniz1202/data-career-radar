@@ -7,8 +7,10 @@ from dotenv import load_dotenv
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Identity,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -19,6 +21,7 @@ from sqlalchemy.engine import URL, Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 UNIQUE_CONSTRAINT_NAME = "uq_job_postings_source_board_external_id"
+SCORE_CHECK_CONSTRAINT_NAME = "ck_job_postings_match_score_range"
 
 
 class Base(DeclarativeBase):
@@ -32,6 +35,9 @@ class JobPostingRow(Base):
     __table_args__ = (
         UniqueConstraint(
             "source", "board_slug", "external_id", name=UNIQUE_CONSTRAINT_NAME
+        ),
+        CheckConstraint(
+            "match_score BETWEEN 1 AND 10", name=SCORE_CHECK_CONSTRAINT_NAME
         ),
     )
 
@@ -54,6 +60,13 @@ class JobPostingRow(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    # LLM evaluation: NULL means "not evaluated yet". The score ranks review
+    # effort; it is not a probability of being hired.
+    match_score: Mapped[int | None] = mapped_column(Integer)
+    salary_extracted: Mapped[str | None] = mapped_column(Text)
+    match_reason: Mapped[str | None] = mapped_column(Text)
+    match_model: Mapped[str | None] = mapped_column(Text)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 def get_database_url() -> URL:
