@@ -1,12 +1,15 @@
 """Canonical, provider-agnostic models for ingested job data.
 
-Every source adapter (Greenhouse today, Ashby later) must map its raw payload
+Every source adapter must map its raw payload
 into these models, so downstream stages never depend on a provider's schema.
 """
 
 from datetime import datetime, timezone
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+
+from career_radar.normalization.location import CountryCode, normalize_location
 
 
 def _utcnow() -> datetime:
@@ -24,9 +27,11 @@ class JobPosting(BaseModel):
     title: str
     location: str | None = Field(
         default=None,
-        description="Raw location text as published. Not interpreted: remote != eligible.",
+        description="Raw location text, preserved as published.",
     )
     url: HttpUrl = Field(description="Absolute URL of the job ad.")
+    is_remote: bool = Field(default=False, description="Remote hint, not eligibility.")
+    country_code: CountryCode | None = Field(default=None)
     updated_at: datetime | None = Field(
         default=None, description="Last update timestamp reported by the provider."
     )
@@ -36,6 +41,13 @@ class JobPosting(BaseModel):
     collected_at: datetime = Field(
         default_factory=_utcnow, description="Instant (UTC) this record was observed."
     )
+
+    @model_validator(mode="after")
+    def normalize_location_fields(self) -> Self:
+        normalized = normalize_location(self.location, self.is_remote)
+        object.__setattr__(self, "is_remote", normalized.is_remote)
+        object.__setattr__(self, "country_code", normalized.country_code)
+        return self
 
 
 class CompanyBoard(BaseModel):

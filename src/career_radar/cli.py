@@ -3,6 +3,7 @@ import sys
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from career_radar.ingestion.ashby_adapter import AshbyAdapter, AshbyError
 from career_radar.ingestion.greenhouse_adapter import GreenhouseAdapter, GreenhouseError
 from career_radar.storage.database import get_engine
 from career_radar.storage.repository import JobPostingRepository
@@ -10,11 +11,12 @@ from career_radar.storage.repository import JobPostingRepository
 DEFAULT_SLUG = "clara"
 
 
-def run_ingest(slug: str, limit: int) -> int:
-    """Fetch a Greenhouse board, print a sample, and upsert it into PostgreSQL."""
+def run_ingest(slug: str, limit: int, source: str = "greenhouse") -> int:
+    """Fetch a supported board, print a sample, and upsert it into PostgreSQL."""
     try:
-        board = GreenhouseAdapter().fetch_board(slug)
-    except GreenhouseError as exc:
+        adapter = AshbyAdapter() if source == "ashby" else GreenhouseAdapter()
+        board = adapter.fetch_board(slug)
+    except (GreenhouseError, AshbyError) as exc:
         print(f"Ingestion failed: {exc}", file=sys.stderr)
         return 1
 
@@ -22,31 +24,46 @@ def run_ingest(slug: str, limit: int) -> int:
     for posting in board.postings[:limit]:
         print(f"- title: {posting.title}")
         print(f"  location: {posting.location}")
+        print(f"  remote: {posting.is_remote}; country: {posting.country_code}")
         print(f"  url: {posting.url}")
 
     try:
         result = JobPostingRepository(get_engine()).upsert_postings(board.postings)
     except SQLAlchemyError as exc:
         # Do not echo the full error: it may contain connection details.
-        print(f"Storage failed ({type(exc).__name__}); transaction rolled back.", file=sys.stderr)
+        print(
+            f"Storage failed ({type(exc).__name__}); transaction rolled back.",
+            file=sys.stderr,
+        )
         return 1
 
-    print(f"Stored: {result.inserted} new, {result.updated} updated ({result.total} total)")
+    print(
+        f"Stored: {result.inserted} new, {result.updated} updated "
+        f"({result.total} total)"
+    )
     return 0
 
 
 def main():
     parser = argparse.ArgumentParser(description="Data Career Radar CLI")
-    parser.add_argument("--action", choices=["ingest", "normalize"], help="Action to perform")
-    parser.add_argument("--slug", default=DEFAULT_SLUG, help="Greenhouse board slug")
+    parser.add_argument(
+        "--action", choices=["ingest", "normalize"], help="Action to perform"
+    )
+    parser.add_argument(
+        "--source", choices=["greenhouse", "ashby"], default="greenhouse"
+    )
+    parser.add_argument("--slug", help="Company board slug (default depends on source)")
     parser.add_argument("--limit", type=int, default=5, help="Max postings to print")
 
     args = parser.parse_args()
 
     if args.action == "ingest":
-        sys.exit(run_ingest(args.slug, args.limit))
+        slug = args.slug or ("constructor" if args.source == "ashby" else DEFAULT_SLUG)
+        sys.exit(run_ingest(slug, args.limit, args.source))
     elif args.action == "normalize":
-        print("Normalization not implemented yet.")
+        print(
+            "Normalization runs during ingest; re-ingest a board to refresh its hints."
+        )
     else:
         parser.print_help()
 

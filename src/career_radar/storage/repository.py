@@ -1,4 +1,4 @@
-"""Persistence for job postings. Talks to the ingestion layer only via Pydantic models."""
+"""Persist provider-independent Pydantic postings with an atomic UPSERT."""
 
 from dataclasses import dataclass
 from typing import Sequence
@@ -34,6 +34,8 @@ class JobPostingRepository:
             "board_slug": posting.board_slug,
             "title": posting.title,
             "location": posting.location,
+            "is_remote": posting.is_remote,
+            "country_code": posting.country_code,
             "url": str(posting.url),
             "updated_at": posting.updated_at,
             "content": posting.content,
@@ -48,7 +50,9 @@ class JobPostingRepository:
         are preserved. Rolls back entirely on any failure.
         """
         # A single INSERT cannot affect the same key twice: dedupe, keeping the last.
-        rows = {(p.source, p.board_slug, p.external_id): self._to_row(p) for p in postings}
+        rows = {
+            (p.source, p.board_slug, p.external_id): self._to_row(p) for p in postings
+        }
         if not rows:
             return UpsertResult(0, 0)
 
@@ -56,20 +60,22 @@ class JobPostingRepository:
         inserted = updated = 0
         with self.engine.begin() as conn:
             for start in range(0, len(values), _CHUNK_SIZE):
-                stmt = insert(JobPostingRow).values(values[start:start + _CHUNK_SIZE])
+                stmt = insert(JobPostingRow).values(values[start : start + _CHUNK_SIZE])
                 excluded = stmt.excluded
-                stmt = stmt.on_conflict_do_update(
+                upsert = stmt.on_conflict_do_update(
                     constraint=UNIQUE_CONSTRAINT_NAME,
                     set_={
                         "title": excluded.title,
                         "location": excluded.location,
+                        "is_remote": excluded.is_remote,
+                        "country_code": excluded.country_code,
                         "url": excluded.url,
                         "updated_at": excluded.updated_at,
                         "content": excluded.content,
                         "last_seen_at": excluded.last_seen_at,
                     },
                 ).returning(text("(xmax = 0) AS inserted"))
-                for (was_inserted,) in conn.execute(stmt):
+                for (was_inserted,) in conn.execute(upsert):
                     if was_inserted:
                         inserted += 1
                     else:

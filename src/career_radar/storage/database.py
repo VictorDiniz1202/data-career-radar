@@ -6,15 +6,17 @@ from datetime import datetime
 from dotenv import load_dotenv
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Identity,
+    String,
     Text,
     UniqueConstraint,
     create_engine,
+    false,
 )
 from sqlalchemy.engine import URL, Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-
 
 UNIQUE_CONSTRAINT_NAME = "uq_job_postings_source_board_external_id"
 
@@ -39,11 +41,19 @@ class JobPostingRow(Base):
     board_slug: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     location: Mapped[str | None] = mapped_column(Text)
+    is_remote: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=false()
+    )
+    country_code: Mapped[str | None] = mapped_column(String(2))
     url: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     content: Mapped[str | None] = mapped_column(Text)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 def get_database_url() -> URL:
