@@ -62,6 +62,9 @@ class JobPostingRow(Base):
     )
     # LLM evaluation: NULL means "not evaluated yet". The score ranks review
     # effort; it is not a probability of being hired.
+    # Title pre-filter: NULL means "not classified yet" (rows from before 0004),
+    # so only an explicit TRUE makes a posting eligible for a paid LLM call.
+    is_data_role: Mapped[bool | None] = mapped_column(Boolean)
     match_score: Mapped[int | None] = mapped_column(Integer)
     salary_extracted: Mapped[str | None] = mapped_column(Text)
     match_reason: Mapped[str | None] = mapped_column(Text)

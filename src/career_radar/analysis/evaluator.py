@@ -77,6 +77,8 @@ def evaluate_pending(
 ) -> list[EvaluationOutcome]:
     """Score up to `limit` pending postings, persisting each one as it succeeds.
 
+    Pending means data-family only (is_data_role = TRUE, enforced by the
+    repository query), so no paid call is spent on out-of-scope titles.
     A failed call is reported and left NULL so the next run retries it.
     """
     if limit < 1:

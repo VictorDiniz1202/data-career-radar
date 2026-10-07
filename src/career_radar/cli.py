@@ -52,6 +52,17 @@ def run_ingest(slug: str, limit: int, source: str = "greenhouse") -> int:
     return 0
 
 
+def run_classify() -> int:
+    """Fill is_data_role for postings stored before the pre-filter existed."""
+    try:
+        count = JobPostingRepository(get_engine()).classify_unclassified()
+    except SQLAlchemyError as exc:
+        print(f"Storage failed ({type(exc).__name__}).", file=sys.stderr)
+        return 1
+    print(f"Classified: {count} postings (is_data_role was NULL)")
+    return 0
+
+
 def run_evaluate(resume_path: Path, limit: int, allowed_countries: list[str]) -> int:
     """Score up to `limit` pending postings with Gemini and print the results."""
     if limit < 1:
@@ -94,7 +105,7 @@ def main():
     parser = argparse.ArgumentParser(description="Data Career Radar CLI")
     parser.add_argument(
         "--action",
-        choices=["ingest", "normalize", "evaluate"],
+        choices=["ingest", "normalize", "classify", "evaluate"],
         help="Action to perform",
     )
     parser.add_argument(
@@ -129,6 +140,8 @@ def main():
         print(
             "Normalization runs during ingest; re-ingest a board to refresh its hints."
         )
+    elif args.action == "classify":
+        sys.exit(run_classify())
     elif args.action == "evaluate":
         if args.resume_path is None:
             parser.error("--action evaluate requires --resume-path")

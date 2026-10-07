@@ -185,3 +185,68 @@ def test_evaluation_selection_storage_and_reset(database):
     command.downgrade(config, "0002_add_normalization_fields")
     with engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM job_postings")).scalar_one() == 4
+
+
+def test_data_role_prefilter_gates_evaluation_and_preserves_legacy_rows(database):
+    engine, config = database
+    command.upgrade(config, "0003_add_llm_evaluation_fields")
+    seen = datetime(2026, 10, 6, tzinfo=timezone.utc)
+    with engine.begin() as conn:
+        for external_id, title in [("old-de", "Data Engineer"), ("old-ae", "AE")]:
+            conn.execute(
+                text("""
+                INSERT INTO job_postings
+                (source, board_slug, external_id, title, url, content,
+                 first_seen_at, last_seen_at, match_score)
+                VALUES ('ashby', 'example', :id, :title, 'https://example.com/j',
+                        'Body', :seen, :seen, NULL)
+            """),
+                {"id": external_id, "title": title, "seen": seen},
+            )
+    command.upgrade(config, "head")
+    command.check(config)
+    repository = JobPostingRepository(engine)
+    BR = "São Paulo / SP / Brazil"
+
+    # Migration is non-destructive: legacy rows stay NULL and are not evaluated.
+    with engine.connect() as conn:
+        flags = conn.execute(text("SELECT is_data_role FROM job_postings")).scalars()
+        assert set(flags) == {None}
+    assert repository.fetch_unevaluated(10, ["BR"]) == []
+
+    # Backfill writes only the new column.
+    assert repository.classify_unclassified() == 2
+    assert repository.classify_unclassified() == 0
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT external_id, is_data_role, last_seen_at FROM job_postings")
+        ).all()
+    assert {r.external_id: r.is_data_role for r in rows} == {
+        "old-de": True,
+        "old-ae": False,
+    }
+    assert {r.last_seen_at for r in rows} == {seen}
+    assert [p.title for p in repository.fetch_unevaluated(10, ["BR"])] == [
+        "Data Engineer"
+    ]
+
+    # New ingestion stores the flag at UPSERT time, and re-ingestion refreshes it.
+    repository.upsert_postings(
+        [
+            posting(BR, external_id="sales", title="Account Executive", content="Body"),
+            posting(BR, external_id="de", title="Analytics Engineer", content="Body"),
+        ]
+    )
+    pending = {p.title for p in repository.fetch_unevaluated(10, ["BR"])}
+    assert pending == {"Data Engineer", "Analytics Engineer"}
+    repository.upsert_postings(
+        [posting(BR, external_id="sales", title="Data Analyst", content="Body")]
+    )
+    assert "Data Analyst" in {p.title for p in repository.fetch_unevaluated(10, ["BR"])}
+
+    command.downgrade(config, "0003_add_llm_evaluation_fields")
+    with engine.connect() as conn:
+        assert (
+            "is_data_role"
+            not in conn.execute(text("SELECT * FROM job_postings")).keys()
+        )

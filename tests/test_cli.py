@@ -52,3 +52,29 @@ def test_storage_result_or_sanitized_failure(monkeypatch, capsys, fail):
     assert "private detail" not in captured.err
     if not fail:
         assert "Stored: 0 new, 0 updated" in captured.out
+
+
+def test_cli_routes_classify(monkeypatch):
+    classify = Mock(return_value=0)
+    monkeypatch.setattr(cli, "run_classify", classify)
+    monkeypatch.setattr("sys.argv", ["career-radar", "--action", "classify"])
+    with pytest.raises(SystemExit) as result:
+        cli.main()
+    assert result.value.code == 0
+    classify.assert_called_once_with()
+
+
+def test_run_classify_reports_count(monkeypatch, capsys):
+    repository = Mock()
+    repository.classify_unclassified.return_value = 7
+    monkeypatch.setattr(cli, "get_engine", Mock())
+    monkeypatch.setattr(cli, "JobPostingRepository", Mock(return_value=repository))
+    assert cli.run_classify() == 0
+    assert "Classified: 7 postings" in capsys.readouterr().out
+
+
+def test_run_classify_hides_storage_details(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "get_engine", Mock(side_effect=SQLAlchemyError("pw")))
+    assert cli.run_classify() == 1
+    err = capsys.readouterr().err
+    assert "SQLAlchemyError" in err and "pw" not in err

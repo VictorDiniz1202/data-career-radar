@@ -8,6 +8,7 @@ from sqlalchemy import Engine, case, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
 from career_radar.ingestion.models import JobPosting
+from career_radar.normalization.job_family import is_data_role
 from career_radar.storage.database import UNIQUE_CONSTRAINT_NAME, JobPostingRow
 
 _CHUNK_SIZE = 500
@@ -59,6 +60,7 @@ class JobPostingRepository:
             "url": str(posting.url),
             "updated_at": posting.updated_at,
             "content": posting.content,
+            "is_data_role": is_data_role(posting.title),
             "first_seen_at": posting.collected_at,
             "last_seen_at": posting.collected_at,
         }
@@ -95,6 +97,7 @@ class JobPostingRepository:
                         "url": excluded.url,
                         "updated_at": excluded.updated_at,
                         "content": excluded.content,
+                        "is_data_role": excluded.is_data_role,
                         "last_seen_at": excluded.last_seen_at,
                         # An evaluation describes the text it read: drop it when
                         # the posting content changes so it is re-evaluated.
@@ -117,8 +120,10 @@ class JobPostingRepository:
     def fetch_unevaluated(
         self, limit: int, allowed_countries: Sequence[str]
     ) -> list[PendingPosting]:
-        """Postings without a score whose country hint does not exclude us.
+        """Data-family postings without a score whose country hint allows us.
 
+        Only is_data_role = TRUE is sent to the paid LLM: FALSE is out of scope
+        and NULL (not classified yet) must go through `classify` first.
         NULL country_code is kept: unknown location needs review, it is not
         proof of eligibility. Postings without content have nothing to evaluate.
         """
@@ -133,6 +138,7 @@ class JobPostingRepository:
                 JobPostingRow.content,
             )
             .where(
+                JobPostingRow.is_data_role.is_(True),
                 JobPostingRow.match_score.is_(None),
                 JobPostingRow.content.is_not(None),
                 JobPostingRow.content != "",
@@ -143,6 +149,27 @@ class JobPostingRepository:
         )
         with self.engine.connect() as conn:
             return [PendingPosting(**row) for row in conn.execute(stmt).mappings()]
+
+    def classify_unclassified(self) -> int:
+        """Fill is_data_role where it is still NULL; returns rows classified.
+
+        Writes only that column, so scores, content and timestamps of postings
+        stored before migration 0004 are preserved.
+        """
+        select_stmt = select(JobPostingRow.id, JobPostingRow.title).where(
+            JobPostingRow.is_data_role.is_(None)
+        )
+        with self.engine.begin() as conn:
+            rows = conn.execute(select_stmt).all()
+            for flag in (True, False):
+                ids = [row.id for row in rows if is_data_role(row.title) is flag]
+                for start in range(0, len(ids), _CHUNK_SIZE):
+                    conn.execute(
+                        update(JobPostingRow)
+                        .where(JobPostingRow.id.in_(ids[start : start + _CHUNK_SIZE]))
+                        .values(is_data_role=flag)
+                    )
+        return len(rows)
 
     def save_evaluation(
         self,
