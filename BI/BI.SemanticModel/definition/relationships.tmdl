@@ -1,0 +1,8 @@
+relationship fato_calendario
+	fromColumn: fato_vagas.data_primeira_vez
+	toColumn: dim_calendario.data
+
+relationship fato_empresa
+	fromColumn: fato_vagas.empresa_key
+	toColumn: dim_empresa.empresa_key
+

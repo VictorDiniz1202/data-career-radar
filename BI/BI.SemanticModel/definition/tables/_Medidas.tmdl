@@ -1,0 +1,42 @@
+table _Medidas
+	lineageTag: 6a9e54e7-6d01-4dcf-a398-5c62827b0598
+
+	measure 'Total Vagas' = COUNTROWS ( fato_vagas )
+		formatString: #,0
+		lineageTag: dfffeb10-c760-4449-a5a8-588491cfd1b8
+
+	measure 'Vagas de Dados' = CALCULATE ( [Total Vagas], fato_vagas[is_data_role] = TRUE () )
+		formatString: #,0
+		lineageTag: 0971828d-b44b-44c3-bfc7-097d23412662
+
+	/// Filtro de localização (country_code = BR); não confirma elegibilidade de contratação.
+	measure 'Vagas Elegíveis BR' = CALCULATE ( [Vagas de Dados], fato_vagas[country_code] = "BR" )
+		formatString: #,0
+		lineageTag: 1d6cb6c6-9a8f-4a1f-8cd3-1d98b4916f70
+
+	measure 'Vagas a Revisar (País Desconhecido)' = CALCULATE ( [Vagas de Dados], ISBLANK ( fato_vagas[country_code] ) )
+		formatString: #,0
+		lineageTag: 409c122b-91d0-41fe-bbb1-0c6de4fc180f
+
+	measure 'Vagas Avaliadas' = CALCULATE ( COUNT ( fato_vagas[match_score] ), fato_vagas[is_data_role] = TRUE () )
+		formatString: #,0
+		lineageTag: f7b805b6-78c9-4fd9-91df-af0c61fa751f
+
+	/// Prioridade de esforço de revisão, não chance de contratação.
+	measure 'Nota Média' = CALCULATE ( AVERAGE ( fato_vagas[match_score] ), fato_vagas[is_data_role] = TRUE () )
+		formatString: 0.00
+		lineageTag: 1c948c12-d513-4fac-b81d-107e6e29c627
+
+	measure 'Cobertura de Avaliação' = DIVIDE ( [Vagas Avaliadas], [Vagas de Dados] )
+		formatString: 0.0%
+		lineageTag: 4c1095c7-800e-43e7-b12e-6aaf430d9e9a
+
+	column _
+		lineageTag: 3a144607-96b2-4e63-8af1-77f50a956fd7
+		isNameInferred
+		sourceColumn: [_]
+
+	partition _Medidas = calculated
+		mode: import
+		source = ROW ( "_", 1 )
+

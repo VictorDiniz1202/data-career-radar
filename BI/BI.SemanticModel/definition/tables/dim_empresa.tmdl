@@ -1,0 +1,31 @@
+table dim_empresa
+	lineageTag: 9a2ab61e-7161-4af0-a09e-f0341dbd41f9
+
+	column empresa_key
+		dataType: string
+		isKey
+		lineageTag: 686832da-95c5-481c-892b-57d3b7966e5d
+		summarizeBy: none
+		sourceColumn: empresa_key
+
+	column source
+		dataType: string
+		lineageTag: d3ab1d28-7920-4bb2-afe6-71a8c9b8f9a8
+		summarizeBy: none
+		sourceColumn: source
+
+	column board_slug
+		dataType: string
+		lineageTag: be99627f-8bd1-43dd-ace5-3502829a5a29
+		summarizeBy: none
+		sourceColumn: board_slug
+
+	partition dim_empresa = m
+		mode: import
+		source =
+				let
+				    Fonte = PostgreSQL.Database("localhost:5433", "radar_db", [Query = "SELECT DISTINCT source, board_slug, source || '|' || board_slug AS empresa_key FROM job_postings"]),
+				    Tipos = Table.TransformColumnTypes(Fonte, {{"source", type text}, {"board_slug", type text}, {"empresa_key", type text}})
+				in
+				    Tipos
+

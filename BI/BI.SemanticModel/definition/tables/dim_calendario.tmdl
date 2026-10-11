@@ -1,0 +1,18 @@
+table dim_calendario
+	lineageTag: 587da4a3-aa45-4228-b8c8-80838d9594a2
+	dataCategory: Time
+
+	column data
+		isUnique
+		lineageTag: c741a909-89ca-4b34-ae94-39ce5083c26f
+		sourceColumn: [Date]
+
+	column ano_mes
+		lineageTag: 62a61d1e-1b8f-4a22-8478-533a6d78f0b8
+		isNameInferred
+		sourceColumn: [ano_mes]
+
+	partition dim_calendario = calculated
+		mode: import
+		source = ADDCOLUMNS ( CALENDAR ( MIN ( fato_vagas[data_primeira_vez] ), TODAY () ), "ano_mes", FORMAT ( [Date], "YYYY-MM" ) )
+

@@ -1,0 +1,139 @@
+table fato_vagas
+	lineageTag: 231a7507-54c2-40b7-8eda-55e3b19f1528
+
+	column id
+		dataType: int64
+		isKey
+		lineageTag: 4e8157d8-3be1-4a56-9583-7644cdde2186
+		summarizeBy: none
+		sourceColumn: id
+
+	column source
+		dataType: string
+		lineageTag: 9b4e0bea-e460-4dac-b608-7f5f8897a7b2
+		summarizeBy: none
+		sourceColumn: source
+
+	column board_slug
+		dataType: string
+		lineageTag: 31705fea-ec75-4741-8449-fbe06363f29b
+		summarizeBy: none
+		sourceColumn: board_slug
+
+	column external_id
+		dataType: string
+		lineageTag: d4e75a7f-7089-4451-8d64-2297668c66f4
+		summarizeBy: none
+		sourceColumn: external_id
+
+	column title
+		dataType: string
+		lineageTag: 08827f96-0d9c-4a2f-802c-0114b854b954
+		summarizeBy: none
+		sourceColumn: title
+
+	column location
+		dataType: string
+		lineageTag: e196e65e-3119-4faa-a0ae-31f34d7d73fe
+		summarizeBy: none
+		sourceColumn: location
+
+	column is_remote
+		dataType: boolean
+		lineageTag: ce06cb5e-84b4-4283-b8c6-b0d0e27338b6
+		summarizeBy: none
+		sourceColumn: is_remote
+
+	column country_code
+		dataType: string
+		lineageTag: d3c5740e-fc39-4ffc-845b-97115d79c916
+		summarizeBy: none
+		sourceColumn: country_code
+
+	column url
+		dataType: string
+		lineageTag: 9747108d-4cc7-4865-a75a-b81a133fe857
+		dataCategory: WebUrl
+		summarizeBy: none
+		sourceColumn: url
+
+	column updated_at
+		dataType: dateTime
+		lineageTag: c42c1c20-f7ab-4125-a86b-1232d9e1ccb2
+		summarizeBy: none
+		sourceColumn: updated_at
+
+	column first_seen_at
+		dataType: dateTime
+		lineageTag: cfb81443-bdc7-4216-a8a7-1729b5047c87
+		summarizeBy: none
+		sourceColumn: first_seen_at
+
+	column last_seen_at
+		dataType: dateTime
+		lineageTag: 490163c8-090f-4ef0-9bd9-4278aed36ddb
+		summarizeBy: none
+		sourceColumn: last_seen_at
+
+	column is_data_role
+		dataType: boolean
+		lineageTag: a834c43e-9a6a-4827-a846-9e10f8f23186
+		summarizeBy: none
+		sourceColumn: is_data_role
+
+	column match_score
+		dataType: int64
+		lineageTag: 8b2fbc33-e849-4daa-97a2-27ddf47696e8
+		summarizeBy: none
+		sourceColumn: match_score
+
+	column salary_extracted
+		dataType: string
+		lineageTag: 6747d961-4514-417b-84bf-0df65f629308
+		summarizeBy: none
+		sourceColumn: salary_extracted
+
+	column match_reason
+		dataType: string
+		lineageTag: 7a7354e6-79b3-4efb-b0af-392b5470584a
+		summarizeBy: none
+		sourceColumn: match_reason
+
+	column match_model
+		dataType: string
+		lineageTag: 9758d073-906d-483a-b978-f03abaf87413
+		summarizeBy: none
+		sourceColumn: match_model
+
+	column evaluated_at
+		dataType: dateTime
+		lineageTag: 7d287425-d112-4e78-9364-43aee14b4232
+		summarizeBy: none
+		sourceColumn: evaluated_at
+
+	column empresa_key
+		dataType: string
+		lineageTag: dbd8774e-0301-4ece-a630-e7cf2892bc05
+		summarizeBy: none
+		sourceColumn: empresa_key
+
+	column data_primeira_vez
+		dataType: dateTime
+		formatString: dd/MM/yyyy
+		lineageTag: 0697d417-22cc-4110-8653-272610d388f6
+		summarizeBy: none
+		sourceColumn: data_primeira_vez
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	partition fato_vagas = m
+		mode: import
+		source =
+				let
+				    Fonte = PostgreSQL.Database("localhost:5433", "radar_db", [Query = "SELECT id, source, board_slug, external_id, title, location, is_remote, country_code, url, updated_at, first_seen_at, last_seen_at, is_data_role, match_score, salary_extracted, match_reason, match_model, evaluated_at FROM job_postings"]),
+				    Tipos = Table.TransformColumnTypes(Fonte, {{"id", Int64.Type}, {"is_remote", type logical}, {"is_data_role", type logical}, {"country_code", type text}, {"match_score", Int64.Type}, {"updated_at", type datetime}, {"first_seen_at", type datetime}, {"last_seen_at", type datetime}, {"evaluated_at", type datetime}}),
+				    EmpresaKey = Table.AddColumn(Tipos, "empresa_key", each [source] & "|" & [board_slug], type text),
+				    DataPrimeiraVez = Table.AddColumn(EmpresaKey, "data_primeira_vez", each Date.From([first_seen_at]), type date)
+				in
+				    DataPrimeiraVez
+
